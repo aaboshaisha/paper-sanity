@@ -122,23 +122,6 @@ analyses_t.insert(
     ])
 )
 
-#--------------------------------#
-
-def CardFooter(pid:int):
-    return Div(
-        A('Original', hx_get=f'/original?pid={pid}', hx_target='#abstract-text'),
-        A('Simple', hx_get=f'/simple?pid={pid}', hx_target='#abstract-text', style='margin-left:10px;'),
-        A('Compute', hx_get=f'/compute?pid={pid}', hx_target='#compute', style='margin-left:10px;'),
-        A('Improvements',hx_get=f'/improvements?pid={pid}', hx_target='#improvements', style='margin-left:10px;')
-    )
-
-def PaperCard(meta:Metadata, pid:int):
-    return Card(
-        H4(A(meta.title, href=meta.url, style='color: #c66;')),
-        P(meta.abstract, id='abstract-text'),
-        Div(id='compute'), Div(id='improvements'), CardFooter(pid),
-        style='background-color:#eee; padding:10px; border-radius:5px;')
-
 
 
 def format_compute(analysis):
@@ -172,6 +155,24 @@ def format_improvements(analysis):
     )
 
 
+#--------------------------------#
+
+def CardFooter(pid:int):
+    return Div(
+        A('Original', hx_get=f'/original?pid={pid}', hx_target='#abstract-text'),
+        A('Simple', hx_get=f'/simple?pid={pid}', hx_target='#abstract-text', style='margin-left:10px;'),
+        A('Compute', hx_get=f'/compute?pid={pid}', hx_target=f'#compute-{pid}', style='margin-left:10px;'),
+        A('Improvements',hx_get=f'/improvements?pid={pid}', hx_target=f'#improvements-{pid}', style='margin-left:10px;')
+    )
+
+def PaperCard(meta:Metadata, pid:int):
+    return Card(
+        H4(A(meta.title, href=meta.url, style='color: #c66;')),
+        P(meta.abstract, id='abstract-text'),
+        Div(id=f'compute-{pid}'), Div(id=f'improvements-{pid}'), CardFooter(pid),
+        style='background-color:#eee; padding:10px; border-radius:5px;')
+
+
 @rt('/original')
 def get(pid:int): return metadata_t[pid].abstract
 
@@ -182,24 +183,35 @@ def get(pid:int): return metadata_t[pid].simple_abstract
 def get(pid:int):
     analysis = analyses_t[pid]
     return Div(format_compute(analysis),
-               A('remove', hx_get='/remove/compute', hx_swap='outerHTML', hx_target='#compute', style='margin-left:10px;'),
-               id='compute')
+               A('remove', hx_get=f'/remove/compute/{pid}', hx_swap='outerHTML', hx_target=f'#compute-{pid}', style='margin-left:10px;'),
+               id=f'compute-{pid}')
 
 @rt('/improvements')
 def get(pid:int):
     analysis = analyses_t[pid]
     return Div(format_improvements(analysis), 
-               A('remove', hx_get='/remove/improvements', hx_swap='outerHTML', hx_target='#improvements', style='margin-left:10px;'),
-               id='improvements'
+               A('remove', hx_get=f'/remove/improvements/{pid}', hx_swap='outerHTML', hx_target=f'#improvements-{pid}', style='margin-left:10px;'),
+               id=f'improvements-{pid}'
               )
 
-@rt('/remove/{section}')
-def remove(section:str): return Div(id=section)
+@rt('/remove/{section}/{pid}')
+def remove(section:str, pid:int): return Div(id=f'{section}-{pid}')
+
+
+@rt('/load_more')
+def get(sess):
+    pass
 
 @rt('/')
-def index():
-    pid = 1
-    return Titled('SimpleRead', PaperCard(metadata_t[pid], pid))
+def index(sess):
+    offset = sess.get('offset', 0)
+    n = db.q('select count(*) from metadata')[0]['count(*)']
+    papers = metadata_t(limit=10, offset=offset)
+    cards = [PaperCard(p, i+offset+1) for i, p in enumerate(papers)]
+    more_link = '' if n <= 1 else A('Load More..', hx_get=f'/load_more?offset={offset}') # show only if n > some num
+    return Titled('SimpleRead', 
+                  Div(*cards, id='papers'),
+                  more_link)
 
 
 serve()
