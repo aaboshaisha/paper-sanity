@@ -1,5 +1,6 @@
 from fasthtml.common import *
-import json
+import json, httpx, pypdf
+from io import BytesIO 
 from pydantic import BaseModel, Field 
 from typing import Optional, Literal
 
@@ -266,12 +267,55 @@ def get(gpu1:bool=False, dataset:bool=False, weights:bool=False, colab_rating:in
     else:
         return Redirect('/')
 
+
+#-----------NEW PAPERS------------#
+def get_pages(r:httpx.Response) -> list[str]:
+    """Returns the extracted text content of all PDF pages as a list."""
+    reader = pypdf.PdfReader(BytesIO(r.content))
+    pages = [page.extract_text() for page in reader.pages]
+    return pages
+
+def paper_metadata(pages:list[str]) -> dict[str]:
+    """Applies heuristics to raw text to extract title, authors, and abstract."""
+    first_page = pages[0].lower()
+    abstract_ix, intro_ix = first_page.find('abstract'), first_page.find('introduction')
+    if abstract_ix == -1 or intro_ix == -1:
+        return {"title": "Unknown Title", "authors": "Unknown Authors", "abstract": "Extraction failed."}
+    
+    abstract = first_page[abstract_ix+8:intro_ix].strip() # +8 is len('abstract')
+    page_header_text = first_page[:abstract_ix].split('\n')
+    page_header_lines = [i for i in page_header_text if i.strip() != '']
+    title = page_header_lines[0]
+    authors = ', '.join(page_header_lines[1:]) if len(page_header_lines[1:]) > 0 else "Unknown Authors"
+    text = '\n'.join(pages)
+    return {'title':title, 'authors':authors, 'abstract':abstract, 'text':text}
+
+
+paper_fetch_form = Form(hx_get='/fetch_paper', hx_target='#papers', hx_swap='afterbegin')(Input(type='url', name='url', placeholder='pdf link..'),
+           Button('Fetch'),
+           Div(id='error-msg'))
+
+@rt('/fetch_paper')
+def get(url:str):
+    r = httpx.get(url)
+    if r.status_code == 200:
+        pages = get_pages(r)
+        meta = paper_metadata(pages)
+        paper_meta = Metadata(url=url, **meta)
+        existing = db.q('select * from metadata where url=?', (paper_meta.url,))
+        if not existing:
+            p = metadata_t.insert(paper_meta)
+            return PaperCard(p, p.pid)
+        else:
+            return Div('Paper already exists', id='error-msg', hx_swap_oob='true', hx_swap='delete', hx_trigger='load delay:3s')
+            
+    else:
+        return Div(f'Could not tech paper {r.status_code}', id='error-msg', hx_swap='delete', hx_trigger='load delay:3s')
+
 @rt('/')
 def index(sess):
     papers = metadata_t(limit=limit, offset=0)
     cards = [PaperCard(p, p.pid) for p in papers]
-    return Titled('paper-sanity', filters, Div(*cards, id='papers'), more_link)
-
-
+    return Titled('paper-sanity', paper_fetch_form, filters, Div(*cards, id='papers'), more_link)
 
 serve()
