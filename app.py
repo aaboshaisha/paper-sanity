@@ -236,11 +236,41 @@ def load_more(count:int, sess):
         return (*cards, Span(id='more-link', hx_swap_oob='true'))
     return (*cards, )
 
+
+def AutoCheckbox(label:str, name:str):
+    return Label(Input(type='checkbox', name=name, id=name, hx_trigger='change'),label)
+
+filters = Form(hx_get='/filter_papers', hx_trigger='change', hx_target='#papers')(
+    AutoCheckbox('Single-GPU', name='gpu1'),
+    AutoCheckbox('Public Dataset', name='dataset'),
+    AutoCheckbox('Pretrained Weights', name='weights'),
+    AutoCheckbox('Colab Feasible >= 3', name='colab_rating'),
+    style='display:flex; justify-content:space-between;'
+    )
+
+@rt('/filter_papers')
+def get(gpu1:bool=False, dataset:bool=False, weights:bool=False, colab_rating:int=None):
+    conditions = []
+    if gpu1: conditions.append("multi_gpu_required=0")
+    if dataset: conditions.append("dataset_publicly_available=1")
+    if weights: conditions.append("pretrained_weights_available=1")
+    if colab_rating: conditions.append("colab_feasible_rating >= 3")
+
+    if conditions:
+        rows = analyses_t(where=' AND '.join(conditions))
+        ids = [p.fid for p in rows]
+        placeholders = ','.join('?' * len(ids))
+        papers = metadata_t(where=f"pid IN ({placeholders})", where_args=ids)
+        cards = [PaperCard(p, p.pid) for p in papers]
+        return Div(*cards, id='papers')
+    else:
+        return Redirect('/')
+
 @rt('/')
 def index(sess):
     papers = metadata_t(limit=limit, offset=0)
     cards = [PaperCard(p, p.pid) for p in papers]
-    return Titled('SimpleRead', Div(*cards, id='papers'), more_link)
+    return Titled('paper-sanity', filters, Div(*cards, id='papers'), more_link)
 
 
 
