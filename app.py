@@ -221,16 +221,23 @@ def get(pid:int):
 def remove(section:str, pid:int): return Div(id=f'{section}-{pid}')
 
 limit = 1
-more_link = A('Load More..', hx_get='/load_more', hx_swap='beforeend', hx_target='#papers', hx_vals='js:{count: document.querySelectorAll("#papers > *").length}') # sends count of loaded cards
+more_link = A('Load More..', 
+              hx_get='/load_more', 
+              hx_swap='beforeend', 
+              hx_target='#papers', 
+              hx_vals='js:{count: document.querySelectorAll("#papers > *").length}',
+              id='more-link') # sends count of loaded cards
 
 @rt('/load_more')
-def load_more(count:int):
+def load_more(count:int, sess):
     papers = metadata_t(limit=limit, offset=count)
     cards = [PaperCard(p, p.pid) for p in papers]
+    if count + limit >= len(metadata_t()):
+        return (*cards, Span(id='more-link', hx_swap_oob='true'))
     return (*cards, )
 
 @rt('/')
-def index():
+def index(sess):
     papers = metadata_t(limit=limit, offset=0)
     cards = [PaperCard(p, p.pid) for p in papers]
     return Titled('SimpleRead', Div(*cards, id='papers'), more_link)
