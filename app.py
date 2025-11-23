@@ -167,6 +167,15 @@ def post(pid:int):
     metadata_t.update({'saved':False}, pid=pid)
     return save_btn(pid)
 
+
+@rt('/delete', methods=['delete'])
+def delete(pid:int):
+    metadata_t.delete(pid)
+    if pid in analyses_t:
+        analyses_t.delete(pid)
+    return ''
+    
+
 def CardFooter(pid:int):
     return Div(
         A('Original', hx_get=f'/original?pid={pid}', hx_target=f'#abstract-text-{pid}'),
@@ -174,6 +183,7 @@ def CardFooter(pid:int):
         A('Compute', hx_get=f'/compute?pid={pid}', hx_target=f'#compute-{pid}'),
         A('Improvements',hx_get=f'/improvements?pid={pid}', hx_target=f'#improvements-{pid}'),
         save_btn(pid),
+        A('Delete', hx_delete=f'/delete?pid={pid}', hx_target=f'#card-{pid}', hx_swap='delete'),
         style='display:flex; gap:10px;'
     )
 
@@ -182,6 +192,7 @@ def PaperCard(meta:Metadata, pid:int):
         H4(A(meta.title, href=meta.url, style='color: #c66;')),
         P(meta.abstract, id=f'abstract-text-{pid}'),
         Div(id=f'compute-{pid}'), Div(id=f'improvements-{pid}'), CardFooter(pid),
+        id=f'card-{pid}',
         style='background-color:#eee; padding:10px; border-radius:5px;')
 
 
@@ -195,14 +206,14 @@ def get(pid:int): return metadata_t[pid].simple_abstract
 def get(pid:int):
     analysis = analyses_t[pid]
     return Div(format_compute(analysis),
-               A('remove', hx_get=f'/remove/compute/{pid}', hx_swap='outerHTML', hx_target=f'#compute-{pid}', style='margin-left:10px;'),
+               A('remove', hx_get=f'/remove/compute/{pid}', hx_swap='outerHTML', hx_target=f'#compute-{pid}'),
                id=f'compute-{pid}')
 
 @rt('/improvements')
 def get(pid:int):
     analysis = analyses_t[pid]
     return Div(format_improvements(analysis), 
-               A('remove', hx_get=f'/remove/improvements/{pid}', hx_swap='outerHTML', hx_target=f'#improvements-{pid}', style='margin-left:10px;'),
+               A('remove', hx_get=f'/remove/improvements/{pid}', hx_swap='outerHTML', hx_target=f'#improvements-{pid}'),
                id=f'improvements-{pid}'
               )
 
@@ -210,22 +221,18 @@ def get(pid:int):
 def remove(section:str, pid:int): return Div(id=f'{section}-{pid}')
 
 limit = 1
-more_link = A('Load More..', hx_get='/load_more', hx_swap='beforeend', hx_target='#papers')
+more_link = A('Load More..', hx_get='/load_more', hx_swap='beforeend', hx_target='#papers', hx_vals='js:{count: document.querySelectorAll("#papers > *").length}') # sends count of loaded cards
 
 @rt('/load_more')
-def load_more(sess):
-    offset = sess['offset']
-    papers = metadata_t(limit=limit, offset=offset)
-    cards = [PaperCard(p, i+offset+limit) for i, p in enumerate(papers)]
-    sess['offset'] = offset + limit  # update for next batch
+def load_more(count:int):
+    papers = metadata_t(limit=limit, offset=count)
+    cards = [PaperCard(p, p.pid) for p in papers]
     return (*cards, )
 
 @rt('/')
-def index(sess):
-    sess['offset'] = limit  # Set initial offset
-    n = db.q('select count(*) from metadata')[0]['count(*)']
+def index():
     papers = metadata_t(limit=limit, offset=0)
-    cards = [PaperCard(p, i+1) for i, p in enumerate(papers)]
+    cards = [PaperCard(p, p.pid) for p in papers]
     return Titled('SimpleRead', Div(*cards, id='papers'), more_link)
 
 
