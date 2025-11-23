@@ -159,12 +159,16 @@ def CardFooter(pid:int):
         A('Original', hx_get=f'/original?pid={pid}', hx_target=f'#abstract-text-{pid}'),
         A('Simple', hx_get=f'/simple?pid={pid}', hx_target=f'#abstract-text-{pid}', style='margin-left:10px;'),
         A('Compute', hx_get=f'/compute?pid={pid}', hx_target=f'#compute-{pid}', style='margin-left:10px;'),
-        A('Improvements',hx_get=f'/improvements?pid={pid}', hx_target=f'#improvements-{pid}', style='margin-left:10px;')
+        A('Improvements',hx_get=f'/improvements?pid={pid}', hx_target=f'#improvements-{pid}', style='margin-left:10px;'),
     )
 
 def PaperCard(meta:Metadata, pid:int):
     return Card(
-        H4(A(meta.title, href=meta.url, style='color: #c66;')),
+        Div(
+            H4(A(meta.title, href=meta.url, style='color: #c66;'), style='margin:0;'),
+            Button('💾', style='border:none; background:none;'),
+            style='display:flex; justify-content:space-between; align-items:center;'
+        ),
         P(meta.abstract, id=f'abstract-text-{pid}'),
         Div(id=f'compute-{pid}'), Div(id=f'improvements-{pid}'), CardFooter(pid),
         style='background-color:#eee; padding:10px; border-radius:5px;')
