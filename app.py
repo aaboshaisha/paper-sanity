@@ -197,21 +197,25 @@ def get(pid:int):
 @rt('/remove/{section}/{pid}')
 def remove(section:str, pid:int): return Div(id=f'{section}-{pid}')
 
+limit = 1
+more_link = A('Load More..', hx_get='/load_more', hx_swap='beforeend', hx_target='#papers')
 
 @rt('/load_more')
-def get(sess):
-    pass
+def load_more(sess):
+    offset = sess['offset']
+    papers = metadata_t(limit=limit, offset=offset)
+    cards = [PaperCard(p, i+offset+limit) for i, p in enumerate(papers)]
+    sess['offset'] = offset + limit  # update for next batch
+    return (*cards, )
 
 @rt('/')
 def index(sess):
-    offset = sess.get('offset', 0)
+    sess['offset'] = limit  # Set initial offset
     n = db.q('select count(*) from metadata')[0]['count(*)']
-    papers = metadata_t(limit=10, offset=offset)
-    cards = [PaperCard(p, i+offset+1) for i, p in enumerate(papers)]
-    more_link = '' if n <= 1 else A('Load More..', hx_get=f'/load_more?offset={offset}') # show only if n > some num
-    return Titled('SimpleRead', 
-                  Div(*cards, id='papers'),
-                  more_link)
+    papers = metadata_t(limit=limit, offset=0)
+    cards = [PaperCard(p, i+1) for i, p in enumerate(papers)]
+    return Titled('SimpleRead', Div(*cards, id='papers'), more_link)
+
 
 
 serve()
