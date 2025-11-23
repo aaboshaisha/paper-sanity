@@ -7,9 +7,6 @@ from typing import Optional, Literal
 app, rt = fast_app(live=True)
 
 #---------------Database Stuff-----------#
-
-
-
 class Improvement(BaseModel):
     improvement: str; rationale:str; demo_appeal:str
     effort: Literal['low', 'medium', 'high']
@@ -159,8 +156,8 @@ def format_improvements(analysis):
 
 def CardFooter(pid:int):
     return Div(
-        A('Original', hx_get=f'/original?pid={pid}', hx_target='#abstract-text'),
-        A('Simple', hx_get=f'/simple?pid={pid}', hx_target='#abstract-text', style='margin-left:10px;'),
+        A('Original', hx_get=f'/original?pid={pid}', hx_target=f'#abstract-text-{pid}'),
+        A('Simple', hx_get=f'/simple?pid={pid}', hx_target=f'#abstract-text-{pid}', style='margin-left:10px;'),
         A('Compute', hx_get=f'/compute?pid={pid}', hx_target=f'#compute-{pid}', style='margin-left:10px;'),
         A('Improvements',hx_get=f'/improvements?pid={pid}', hx_target=f'#improvements-{pid}', style='margin-left:10px;')
     )
@@ -168,7 +165,7 @@ def CardFooter(pid:int):
 def PaperCard(meta:Metadata, pid:int):
     return Card(
         H4(A(meta.title, href=meta.url, style='color: #c66;')),
-        P(meta.abstract, id='abstract-text'),
+        P(meta.abstract, id=f'abstract-text-{pid}'),
         Div(id=f'compute-{pid}'), Div(id=f'improvements-{pid}'), CardFooter(pid),
         style='background-color:#eee; padding:10px; border-radius:5px;')
 
