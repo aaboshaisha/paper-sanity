@@ -28,7 +28,7 @@ class ComputeRequirements(BaseModel):
 
 @dataclass
 class Metadata:
-    url:str; text:str; title:str; authors:str; abstract:str; simple_abstract:str; pid:int=None;
+    url:str; text:str; title:str; authors:str; abstract:str; simple_abstract:str; pid:int=None; saved:bool=False;
 
 @dataclass
 class Analysis:
@@ -154,21 +154,32 @@ def format_improvements(analysis):
 
 #--------------------------------#
 
+def save_btn(pid:int):
+    return A('Save', hx_post=f'/save?pid={pid}', hx_swap='outerHTML')
+
+@rt('/save')
+def post(pid:int):
+    metadata_t.update({'saved':True}, pid=pid)
+    return A('Unsave', hx_post=f'/unsave?pid={pid}', hx_swap='outerHTML')
+
+@rt('/unsave')
+def post(pid:int):
+    metadata_t.update({'saved':False}, pid=pid)
+    return save_btn(pid)
+
 def CardFooter(pid:int):
     return Div(
         A('Original', hx_get=f'/original?pid={pid}', hx_target=f'#abstract-text-{pid}'),
-        A('Simple', hx_get=f'/simple?pid={pid}', hx_target=f'#abstract-text-{pid}', style='margin-left:10px;'),
-        A('Compute', hx_get=f'/compute?pid={pid}', hx_target=f'#compute-{pid}', style='margin-left:10px;'),
-        A('Improvements',hx_get=f'/improvements?pid={pid}', hx_target=f'#improvements-{pid}', style='margin-left:10px;'),
+        A('Simple', hx_get=f'/simple?pid={pid}', hx_target=f'#abstract-text-{pid}',),
+        A('Compute', hx_get=f'/compute?pid={pid}', hx_target=f'#compute-{pid}'),
+        A('Improvements',hx_get=f'/improvements?pid={pid}', hx_target=f'#improvements-{pid}'),
+        save_btn(pid),
+        style='display:flex; gap:10px;'
     )
 
 def PaperCard(meta:Metadata, pid:int):
     return Card(
-        Div(
-            H4(A(meta.title, href=meta.url, style='color: #c66;'), style='margin:0;'),
-            Button('💾', style='border:none; background:none;'),
-            style='display:flex; justify-content:space-between; align-items:center;'
-        ),
+        H4(A(meta.title, href=meta.url, style='color: #c66;')),
         P(meta.abstract, id=f'abstract-text-{pid}'),
         Div(id=f'compute-{pid}'), Div(id=f'improvements-{pid}'), CardFooter(pid),
         style='background-color:#eee; padding:10px; border-radius:5px;')
