@@ -222,8 +222,11 @@ def format_improvements(analysis):
 
 #--------------------------------#
 
-def save_btn(pid:int):
+def save_btn(pid:int, saved:bool):
+    if saved:
+        return A('Unsave', hx_post=f'/unsave?pid={pid}', hx_swap='outerHTML')
     return A('Save', hx_post=f'/save?pid={pid}', hx_swap='outerHTML')
+    
 
 @rt('/save')
 def post(pid:int):
@@ -233,7 +236,7 @@ def post(pid:int):
 @rt('/unsave')
 def post(pid:int):
     metadata_t.update({'saved':False}, pid=pid)
-    return save_btn(pid)
+    return save_btn(pid, False)
 
 
 @rt('/delete', methods=['delete'])
@@ -246,12 +249,13 @@ def delete(pid:int):
 
 def CardFooter(pid:int):
     indicator = f'#loading-{pid}'
+    saved = metadata_t[pid].saved
     return Div(
         A('Original', hx_get=f'/original?pid={pid}', hx_target=f'#abstract-text-{pid}'),
         A('Simple', hx_get=f'/simple?pid={pid}', hx_target=f'#abstract-text-{pid}', hx_indicator=indicator),
         A('Compute', hx_get=f'/compute?pid={pid}', hx_target=f'#compute-{pid}', hx_indicator=indicator),
         A('Improvements',hx_get=f'/improvements?pid={pid}', hx_target=f'#improvements-{pid}', hx_indicator=indicator),
-        save_btn(pid),
+        save_btn(pid, saved),
         A('Delete', hx_delete=f'/delete?pid={pid}', hx_target=f'#card-{pid}', hx_swap='delete'),
         style='display:flex; gap:10px;'
     )
@@ -379,22 +383,36 @@ filters = Form(hx_get='/filter_papers', hx_trigger='change', hx_target='#papers'
     AutoCheckbox('Public Dataset', name='dataset'),
     AutoCheckbox('Pretrained Weights', name='weights'),
     AutoCheckbox('Colab Feasible >= 3', name='colab_rating'),
+    AutoCheckbox('Saved', name='saved'),
     style='display:flex; justify-content:space-between;'
 )
 
 @rt('/filter_papers')
-def get(gpu1:bool=False, dataset:bool=False, weights:bool=False, colab_rating:int=None):
+def get(gpu1:bool=False, dataset:bool=False, weights:bool=False, colab_rating:int=None, saved:bool=None):
     conditions = []
     if gpu1: conditions.append("multi_gpu_required=0")
     if dataset: conditions.append("dataset_publicly_available=1")
     if weights: conditions.append("pretrained_weights_available=1")
     if colab_rating: conditions.append("colab_feasible_rating >= 3")
 
-    if conditions:
-        rows = analyses_t(where=' AND '.join(conditions))
-        ids = [p.fid for p in rows]
-        placeholders = ','.join('?' * len(ids))
-        papers = metadata_t(where=f"pid IN ({placeholders})", where_args=ids)
+    if conditions or saved:
+        if conditions:
+            rows = analyses_t(where=' AND '.join(conditions))
+            ids = [p.fid for p in rows]
+            placeholders = ','.join('?' * len(ids))
+    
+            metadata_conditions = [f"pid IN ({placeholders})"]
+            metadata_args = list(ids)
+        else:
+            # No analysis filters, so don't restrict by pid
+            metadata_conditions = []
+            metadata_args = []
+
+        if saved:
+            metadata_conditions.append("saved=1")
+
+        where_clause = ' AND '.join(metadata_conditions) if metadata_conditions else None
+        papers = metadata_t(where=where_clause, where_args=metadata_args or None)
         cards = [PaperCard(p, p.pid) for p in papers]
         return Div(*cards, id='papers')
     else:
