@@ -10,7 +10,48 @@ from fasthtml.common import *
 from dotenv import load_dotenv
 
 load_dotenv()
-app, rt = fast_app(live=True, pico=False)
+
+minimal_css = Style("""
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { 
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
+        background: #fff;
+        color: #000;
+        padding: 20px;
+        font-size: 15px;
+        line-height: 1.6;
+    }
+    a { color: #b30000; text-decoration: none; border-bottom: 1px solid #0000ee; }
+    a:hover { background: #b30000; color: #fff; }
+    
+    article {
+        border: 2px solid #000;
+        padding: 15px;
+        margin: 15px 0;
+    }
+    
+    h1, h2 { 
+        background: #b30000;
+        color: #fff;
+        padding: 12px 20px;
+        margin: -20px -20px 20px -20px;
+    }
+
+    h4 { 
+        font-size: 18px;
+        margin-bottom: 8px;
+    }
+    form {
+        border: 2px solid #000;
+        padding: 10px;
+        margin-bottom: 15px;
+    }
+    label { margin-right: 15px; }
+""")
+
+
+
+app, rt = fast_app(live=True, pico=False, hdrs=(minimal_css,))
 
 #-----------PROMPTS----------------#
 compute_prompt = """Analyze this deep learning paper to assess reproducibility on free Google Colab (Tesla T4: ~15GB VRAM, 12GB RAM, 12hr runtime limit).
@@ -92,8 +133,6 @@ class ComputeRequirements(BaseModel):
     colab_feasible_explanation: Optional[str] = None 
     main_bottleneck: Optional[Literal['vram', 'compute_time', 'dataset_access', 'multi_gpu','no_code', 'none', 'unknown']] = None
 
-
-
 @dataclass
 class Metadata:
     url:str; text:str; title:str; authors:str; abstract:str; simple_abstract:str; pid:int=None; saved:bool=False;
@@ -122,6 +161,39 @@ class Analysis:
 db = database(':memory:')
 metadata_t = db.create(Metadata, pk='pid', if_not_exists=True)
 analyses_t = db.create(Analysis, pk='pid', foreign_keys=[('fid', 'metadata', 'pid')])
+
+
+def format_compute(analysis):
+    return Div(
+        H5("Compute Requirements"),
+        Ul(
+            Li(f"GPU VRAM: {analysis.gpu_vram_gb_min or 'Unknown'} GB"),
+            Li(f"Training Time: {analysis.training_time_hours or 'Unknown'} hours ({analysis.training_time_confidence})"),
+            Li(f"Multi-GPU: {'Yes' if analysis.multi_gpu_required else 'No'}"),
+            Li(f"Colab Feasible: {analysis.colab_feasible_rating}/5 - {analysis.colab_feasible_explanation}"),
+            Li(f"Main Bottleneck: {analysis.main_bottleneck}")
+        )
+    )
+
+def format_improvements(analysis):
+    improvements = json.loads(analysis.improvements)
+
+    items = [
+        Li(
+            H5(imp['improvement']),
+            Small(f"Rationale: {imp['rationale']}"),
+            Br(),
+            Small(f"Effort: {imp['effort']} | Category: {imp['category']}")
+        ) 
+        for imp in improvements
+    ]
+
+    return Div(
+        H5("Suggested Improvements"),
+        Ul(*items)
+    )
+
+
 
 # Insert a few sample papers
 metadata_t.insert(
@@ -187,39 +259,6 @@ analyses_t.insert(
     ])
 )
 
-
-
-def format_compute(analysis):
-    return Div(
-        H5("Compute Requirements"),
-        Ul(
-            Li(f"GPU VRAM: {analysis.gpu_vram_gb_min or 'Unknown'} GB"),
-            Li(f"Training Time: {analysis.training_time_hours or 'Unknown'} hours ({analysis.training_time_confidence})"),
-            Li(f"Multi-GPU: {'Yes' if analysis.multi_gpu_required else 'No'}"),
-            Li(f"Colab Feasible: {analysis.colab_feasible_rating}/5 - {analysis.colab_feasible_explanation}"),
-            Li(f"Main Bottleneck: {analysis.main_bottleneck}")
-        )
-    )
-
-def format_improvements(analysis):
-    improvements = json.loads(analysis.improvements)
-
-    items = [
-        Li(
-            H5(imp['improvement']),
-            Small(f"Rationale: {imp['rationale']}"),
-            Br(),
-            Small(f"Effort: {imp['effort']} | Category: {imp['category']}")
-        ) 
-        for imp in improvements
-    ]
-
-    return Div(
-        H5("Suggested Improvements"),
-        Ul(*items)
-    )
-
-
 #--------------------------------#
 
 def save_btn(pid:int, saved:bool):
@@ -246,7 +285,7 @@ def delete(pid:int):
         analyses_t.delete(pid)
     return ''
 
-
+#-----UI-----------------#
 def CardFooter(pid:int):
     indicator = f'#loading-{pid}'
     saved = metadata_t[pid].saved
@@ -264,7 +303,7 @@ def PaperCard(meta:Metadata, pid:int):
     return Card(
         Div(
             H4(
-                A(meta.title, href=meta.url, style='color: #c66;')
+                A(meta.title, href=meta.url)
             ),
             Div('Loading....', id=f'loading-{pid}', cls='htmx-indicator'),
             style='display:flex; gap:10px; align-items:center'
@@ -272,9 +311,21 @@ def PaperCard(meta:Metadata, pid:int):
         P(meta.abstract, id=f'abstract-text-{pid}'),
         Div(id=f'compute-{pid}'), Div(id=f'improvements-{pid}'), CardFooter(pid),
         id=f'card-{pid}',
-        style='background-color:#eee; padding:10px; border-radius:5px;')
+        style='background-color:#eee; padding:10px; border-radius:5px;'
+    )
 
 
+def AutoCheckbox(label:str, name:str):
+    return Label(Input(type='checkbox', name=name, id=name, hx_trigger='change'),label)
+
+filters = Form(hx_get='/filter_papers', hx_trigger='change', hx_target='#papers')(
+    AutoCheckbox('Single-GPU', name='gpu1'),
+    AutoCheckbox('Public Dataset', name='dataset'),
+    AutoCheckbox('Pretrained Weights', name='weights'),
+    AutoCheckbox('Colab Feasible >= 3', name='colab_rating'),
+    AutoCheckbox('Saved', name='saved'),
+    style='display:flex; justify-content:space-between;'
+)
 
 #------LLM setup---------#
 client = OpenAI(api_key=os.getenv('DEEPSEEK_API_KEY'), base_url='https://api.deepseek.com')
@@ -375,18 +426,6 @@ def load_more(count:int, sess):
     return (*cards, )
 
 
-def AutoCheckbox(label:str, name:str):
-    return Label(Input(type='checkbox', name=name, id=name, hx_trigger='change'),label)
-
-filters = Form(hx_get='/filter_papers', hx_trigger='change', hx_target='#papers')(
-    AutoCheckbox('Single-GPU', name='gpu1'),
-    AutoCheckbox('Public Dataset', name='dataset'),
-    AutoCheckbox('Pretrained Weights', name='weights'),
-    AutoCheckbox('Colab Feasible >= 3', name='colab_rating'),
-    AutoCheckbox('Saved', name='saved'),
-    style='display:flex; justify-content:space-between;'
-)
-
 @rt('/filter_papers')
 def get(gpu1:bool=False, dataset:bool=False, weights:bool=False, colab_rating:int=None, saved:bool=None):
     conditions = []
@@ -419,7 +458,7 @@ def get(gpu1:bool=False, dataset:bool=False, weights:bool=False, colab_rating:in
         return Redirect('/')
 
 
-#-----------NEW PAPERS------------#
+#-----------GET NEW PAPERS------------#
 def get_pages(r:httpx.Response) -> list[str]:
     """Returns the extracted text content of all PDF pages as a list."""
     reader = pypdf.PdfReader(BytesIO(r.content))
