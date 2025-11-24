@@ -11,6 +11,8 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+
+#------CSS-------------#
 minimal_css = Style("""
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body { 
@@ -24,11 +26,7 @@ minimal_css = Style("""
     a { color: #b30000; text-decoration: none; border-bottom: 1px solid #0000ee; }
     a:hover { background: #b30000; color: #fff; }
     
-    article {
-        border: 2px solid #000;
-        padding: 15px;
-        margin: 15px 0;
-    }
+    article { border: 2px solid #000; padding: 15px; margin: 15px 0; }
     
     h1, h2 { 
         background: #b30000;
@@ -37,15 +35,8 @@ minimal_css = Style("""
         margin: -20px -20px 20px -20px;
     }
 
-    h4 { 
-        font-size: 18px;
-        margin-bottom: 8px;
-    }
-    form {
-        border: 2px solid #000;
-        padding: 10px;
-        margin-bottom: 15px;
-    }
+    h4 { font-size: 18px; margin-bottom: 8px; }
+    form { border: 2px solid #000; padding: 10px; margin-bottom: 15px; }
     label { margin-right: 15px; }
 """)
 
@@ -114,7 +105,7 @@ Weak suggestions:
 Paper: 
 {}"""
 
-#---------------Database Stuff-----------#
+#---------------Pydantic & Database Stuff-----------#
 class Improvement(BaseModel):
     improvement: str; rationale:str; demo_appeal:str
     effort: Literal['low', 'medium', 'high']
@@ -192,75 +183,7 @@ def format_improvements(analysis):
         H5("Suggested Improvements"),
         Ul(*items)
     )
-
-
-
-# Insert a few sample papers
-metadata_t.insert(
-    url='https://arxiv.org/abs/2301.00001',
-    text='Full paper text here...',
-    title='Attention Is All You Need v2',
-    authors='Smith, J. and Jones, M.',
-    abstract='We propose a new transformer architecture that...',
-    simple_abstract='A new way to make AI models faster.'
-)
-
-metadata_t.insert(
-    url='https://arxiv.org/abs/2301.00002',
-    text='Another paper...',
-    title='Efficient Training of Large Models',
-    authors='Chen, L. et al.',
-    abstract='Training large neural networks requires...',
-    simple_abstract='Tips for training big AI models cheaply.'
-)
-
-
-# For paper 1 (Transformer paper)
-analyses_t.insert(
-    fid=1, pid=1,
-    gpu_vram_gb_min=16.0,
-    training_time_hours=48.0,
-    training_time_confidence='estimated',
-    multi_gpu_required=False,
-    dataset_publicly_available=True,
-    dataset_size_gb=5.2,
-    code_available=True,
-    pretrained_weights_available=True,
-    colab_feasible_rating=4,
-    colab_feasible_explanation='Should work with T4 GPU and gradient checkpointing',
-    main_bottleneck='compute_time',
-    improvements=json.dumps([
-        {'improvement': 'Test on smaller datasets', 'rationale': 'Validate approach faster', 
-         'demo_appeal': 'Quick results', 'effort': 'low', 'category': 'dataset'},
-        {'improvement': 'Compare with standard transformer', 'rationale': 'Show improvements clearly',
-         'demo_appeal': 'Clear benchmark', 'effort': 'medium', 'category': 'comparison'}
-    ])
-)
-
-# For paper 2 (Efficient Training paper)
-analyses_t.insert(
-    fid=2, pid=2,
-    gpu_vram_gb_min=80.0,
-    training_time_hours=120.0,
-    training_time_confidence='stated',
-    multi_gpu_required=True,
-    dataset_publicly_available=False,
-    dataset_size_gb=250.0,
-    code_available=False,
-    pretrained_weights_available=False,
-    colab_feasible_rating=1,
-    colab_feasible_explanation='Requires multiple A100s and proprietary dataset',
-    main_bottleneck='multi_gpu',
-    improvements=json.dumps([
-        {'improvement': 'Implement key algorithm on toy dataset', 'rationale': 'Demonstrate core technique',
-         'demo_appeal': 'Shows understanding', 'effort': 'high', 'category': 'ablation'},
-        {'improvement': 'Visualize training dynamics', 'rationale': 'Make results more interpretable',
-         'demo_appeal': 'Eye-catching plots', 'effort': 'low', 'category': 'visualization'}
-    ])
-)
-
-#--------------------------------#
-
+#-----UI-----------------#
 def save_btn(pid:int, saved:bool):
     if saved:
         return A('Unsave', hx_post=f'/unsave?pid={pid}', hx_swap='outerHTML')
@@ -285,7 +208,7 @@ def delete(pid:int):
         analyses_t.delete(pid)
     return ''
 
-#-----UI-----------------#
+
 def CardFooter(pid:int):
     indicator = f'#loading-{pid}'
     saved = metadata_t[pid].saved
@@ -303,7 +226,7 @@ def PaperCard(meta:Metadata, pid:int):
     return Card(
         Div(
             H4(
-                A(meta.title, href=meta.url)
+                A(meta.title.title(), href=meta.url)
             ),
             Div('Loading....', id=f'loading-{pid}', cls='htmx-indicator'),
             style='display:flex; gap:10px; align-items:center'
@@ -342,7 +265,7 @@ def run_llm(prompt, content:None):
     """Run any prompt with some optional content"""
     response = client.chat.completions.create(model='deepseek-chat', messages = [{'role':'user', 'content':prompt.format(content)}],)
     return response.choices[0].message.content
-
+    
 def simplify_abstract(text): return run_llm(simplify_prompt, text)
 
 def strip_fences(response):
@@ -370,7 +293,6 @@ async def get(pid:int):
 # are compute filds empty
 def empty_compute(analysis):
     return all(getattr(analysis, k) is None for k in ComputeRequirements.model_fields.keys())
-
 
 def load_or_create_analysis(pid:int):
     results = analyses_t(where='fid=?', where_args=[pid])
@@ -409,7 +331,7 @@ async def get(pid:int):
 @rt('/remove/{section}/{pid}')
 def remove(section:str, pid:int): return Div(id=f'{section}-{pid}')
 
-limit = 1
+limit = 10
 more_link = A('Load More..', 
               hx_get='/load_more', 
               hx_swap='beforeend', 
