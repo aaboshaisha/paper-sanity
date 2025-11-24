@@ -12,6 +12,66 @@ from dotenv import load_dotenv
 load_dotenv()
 app, rt = fast_app(live=True, pico=False)
 
+#-----------PROMPTS----------------#
+compute_prompt = """Analyze this deep learning paper to assess reproducibility on free Google Colab (Tesla T4: ~15GB VRAM, 12GB RAM, 12hr runtime limit).
+
+Return ONLY valid JSON (no markdown, no code fences):
+{{
+  "gpu_vram_gb_min": <number or null>,
+  "training_time_hours": <number or null>,
+  "training_time_confidence": "<stated/estimated/unknown>",
+  "multi_gpu_required": <true/false/null>,
+  "dataset_publicly_available": <true/false/null>,
+  "dataset_size_gb": <number or null>,
+  "code_available": <true/false/null>,
+  "pretrained_weights_available": <true/false/null>,
+  "colab_feasible_rating": <1-5 or null>,
+  "colab_feasible_explanation": "<brief explanation>",
+  "main_bottleneck": "<vram/compute_time/dataset_access/multi_gpu/no_code/none/unknown>"
+}}
+
+Rating scale (1-5):
+5: Fully reproducible in <2 hours
+4: Reproducible with minor adjustments
+3: Possible but requires significant compromises
+2: Very difficult, major modifications needed
+1: Not reproducible on free Colab
+
+Paper text:
+{}"""
+
+
+improvements_prompt = """Analyze this paper and identify 2-3 improvements suitable for a portfolio project. Prioritize extensions that:
+
+1. Produce clear, demonstrable results you can show in 30 seconds
+2. Have a working baseline within 1 week
+3. Work on free Google Colab (15GB VRAM, 12hr runtime)
+4. Show clear before/after improvements
+
+Return ONLY valid JSON (no markdown, no code fences):
+[
+  {{
+    "improvement": "<specific, achievable experiment>",
+    "rationale": "<what skill/insight this demonstrates>",
+    "effort": "<low/medium/high>",
+    "demo_appeal": "<how impressive/demonstrable the results would be>",
+    "category": "<ablation/dataset/comparison/visualization>"
+  }}
+]
+
+Strong suggestions:
+- Apply to a different dataset with clear results
+- Add missing comparison to popular baseline
+- Create interpretability analysis
+- Reproduce with better documentation
+
+Weak suggestions:
+- Requires proprietary data or massive compute
+- Improvements too subtle to demonstrate clearly
+- No clear starting point or existing code
+
+Paper: 
+{}"""
 
 #---------------Database Stuff-----------#
 class Improvement(BaseModel):
@@ -22,15 +82,16 @@ class Improvement(BaseModel):
 class ComputeRequirements(BaseModel):
     gpu_vram_gb_min: Optional[float] = None
     training_time_hours: Optional[float] = None
-    training_time_confidence: Literal['stated', 'estimated', 'unknown']
+    training_time_confidence: Optional[Literal['stated', 'estimated', 'unknown']] = None
     multi_gpu_required: Optional[bool] = None
     dataset_publicly_available: Optional[bool] = None
     dataset_size_gb: Optional[float] = None
     code_available: Optional[bool] = None
     pretrained_weights_available: Optional[bool] = None
     colab_feasible_rating: Optional[int] = Field(None, ge=1, le=5)
-    colab_feasible_explanation: str
-    main_bottleneck: Literal['vram', 'compute_time', 'dataset_access', 'multi_gpu','no_code', 'none', 'unknown']
+    colab_feasible_explanation: Optional[str] = None 
+    main_bottleneck: Optional[Literal['vram', 'compute_time', 'dataset_access', 'multi_gpu','no_code', 'none', 'unknown']] = None
+
 
 
 @dataclass
@@ -54,7 +115,7 @@ class Analysis:
     improvements: str = "{}"  # JSON string
 
     @classmethod
-    def from_analysis(cls, fid:int, compute:ComputeRequirements, improvements=list[Improvement]):
+    def from_analysis(cls, fid:int, compute:ComputeRequirements=None, improvements:list[Improvement]=None):
         return cls(fid, improvements=json.dumps([imp.model_dump() for imp in improvements]), **compute.model_dump())
 
 
@@ -224,12 +285,21 @@ Abstract:
 
 def run_llm(prompt, content:None):
     """Run any prompt with some optional content"""
-    response = client.chat.completions.create(model='deepseek-chat',
-                                              messages = [{'role':'user', 'content':prompt.format(content)}],)
+    response = client.chat.completions.create(model='deepseek-chat', messages = [{'role':'user', 'content':prompt.format(content)}],)
     return response.choices[0].message.content
 
 def simplify_abstract(text): return run_llm(simplify_prompt, text)
 
+def strip_fences(response):
+    return response.split('\n', 1)[1].rsplit('\n```',1)[0] if response.startswith('```') else response
+
+def analyze_compute(text):
+    response = run_llm(compute_prompt, text)
+    return ComputeRequirements.model_validate_json(strip_fences(response))
+
+def analyze_improvements(text):
+    response = run_llm(improvements_prompt, text)
+    return [Improvement.model_validate(imp) for imp in json.loads(strip_fences(response))]
 
 @rt('/original')
 def get(pid:int): return metadata_t[pid].abstract
@@ -239,22 +309,47 @@ async def get(pid:int):
     simple = metadata_t[pid].simple_abstract
     if simple is None:
         simple = await asyncio.to_thread(simplify_abstract, metadata_t[pid].abstract)
+        meta = metadata_t.update({'simple_abstract':simple}, pid=pid)
     return simple
 
+# are compute filds empty
+def empty_compute(analysis):
+    return all(getattr(analysis, k) is None for k in ComputeRequirements.model_fields.keys())
+
+
+def load_or_create_analysis(pid:int):
+    results = analyses_t(where='fid=?', where_args=[pid])
+    if results:
+        analysis = results[0]
+    else:
+        analysis = analyses_t.insert(Analysis(fid=pid))
+    has_compute = not empty_compute(analysis)
+    has_improvements = analysis.improvements not in ["{}", None]
+    return analysis, has_compute, has_improvements
+
 @rt('/compute')
-def get(pid:int):
-    analysis = analyses_t[pid]
+async def get(pid:int):
+    analysis, has_compute, has_improvements = load_or_create_analysis(pid)
+    paper = metadata_t[pid]
+    if not has_compute:
+        compute = await asyncio.to_thread(analyze_compute, paper.text)
+        for k, v in compute.model_dump().items():
+            setattr(analysis, k, v)
+        analysis = analyses_t.update(analysis)
     return Div(format_compute(analysis),
                A('remove', hx_get=f'/remove/compute/{pid}', hx_swap='outerHTML', hx_target=f'#compute-{pid}'),
                id=f'compute-{pid}')
 
 @rt('/improvements')
-def get(pid:int):
-    analysis = analyses_t[pid]
+async def get(pid:int):
+    analysis, has_compute, has_improvements = load_or_create_analysis(pid)
+    paper = metadata_t[pid]
+    if not has_improvements:
+        improvements = await asyncio.to_thread(analyze_improvements, paper.text)
+        analysis.improvements = json.dumps([imp.model_dump() for imp in improvements])
+        analysis = analyses_t.update(analysis)
     return Div(format_improvements(analysis), 
-               A('remove', hx_get=f'/remove/improvements/{pid}', hx_swap='outerHTML', hx_target=f'#improvements-{pid}'),
-               id=f'improvements-{pid}'
-              )
+               A('remove', hx_get=f'/remove/improvements/{pid}', hx_swap='outerHTML', hx_target=f'#improvements-{pid}'), id=f'improvements-{pid}')
 
 @rt('/remove/{section}/{pid}')
 def remove(section:str, pid:int): return Div(id=f'{section}-{pid}')
@@ -329,9 +424,10 @@ def paper_metadata(pages:list[str]) -> dict[str]:
     return {'title':title, 'authors':authors, 'abstract':abstract, 'text':text}
 
 
-paper_fetch_form = Form(hx_get='/fetch_paper', hx_target='#papers', hx_swap='afterbegin', style='display:flex; gap:10px;')(Input(type='url', name='url', placeholder='pdf link..'),
-                                                                                                                           Button('Fetch'),
-                                                                                                                           Div(id='error-msg'))
+paper_fetch_form = Form(hx_get='/fetch_paper', hx_target='#papers', hx_swap='afterbegin', style='display:flex; gap:10px;')(
+    Input(type='url', name='url', placeholder='pdf link..'),
+    Button('Fetch'),
+    Div(id='error-msg'))
 
 @rt('/fetch_paper')
 def get(url:str):
